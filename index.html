@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Screen Sharing Together</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+        }
+        #container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        video {
+            max-width: 100%;
+            border: 1px solid #ccc;
+            margin-bottom: 10px;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            border: none;
+            border-radius: 5px;
+            background-color: #007bff;
+            color: white;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <h1>Screen Sharing Together</h1>
+        <div>
+            <video id="localVideo" autoplay muted></video>
+        </div>
+        <button onclick="startScreenSharing()">Start Sharing Screen</button>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.3.1/socket.io.js"></script>
+    <script>
+        const socket = io(); // Inicjalizacja socket.io na kliencie
+        
+        let localStream;
+        let pc;
+
+        async function startScreenSharing() {
+            try {
+                const stream = await navigator.mediaDevices.getDisplayMedia({ video: { mediaSource: 'screen' } });
+                document.getElementById('localVideo').srcObject = stream;
+                localStream = stream;
+
+                // Rozpoczęcie transmisji strumienia
+                startTransmission();
+            } catch (error) {
+                console.error('Error starting screen sharing:', error);
+            }
+        }
+
+        function startTransmission() {
+            pc = new RTCPeerConnection();
+
+            // Dodanie lokalnego strumienia do połączenia
+            localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+
+            // Nasłuchiwanie zdalnych strumieni
+            pc.ontrack = event => {
+                if (!document.getElementById('remoteVideo')) {
+                    // Stworzenie elementu video dla zdalnego strumienia
+                    const remoteVideo = document.createElement('video');
+                    remoteVideo.id = 'remoteVideo';
+                    remoteVideo.autoplay = true;
+                    document.getElementById('container').appendChild(remoteVideo);
+                }
+                document.getElementById('remoteVideo').srcObject = event.streams[0];
+            };
+
+            // Nasłuchiwanie ofert
+            socket.on('offer', offer => {
+                pc.setRemoteDescription(new RTCSessionDescription(offer))
+                    .then(() => pc.createAnswer())
+                    .then(answer => pc.setLocalDescription(answer))
+                    .then(() => {
+                        // Przesłanie odpowiedzi do nadawcy
+                        socket.emit('answer', pc.localDescription);
+                    })
+                    .catch(error => console.error('Error creating answer:', error));
+            });
+
+            // Nasłuchiwanie odpowiedzi
+            socket.on('answer', answer => {
+                pc.setRemoteDescription(new RTCSessionDescription(answer))
+                    .catch(error => console.error('Error setting remote description:', error));
+            });
+
+            // Nasłuchiwanie kandydatów ICE
+            socket.on('candidate', candidate => {
+                pc.addIceCandidate(candidate)
+                    .catch(error => console.error('Error adding ICE candidate:', error));
+            });
+
+            // Generowanie oferty i wysyłanie jej do drugiego użytkownika
+            pc.createOffer()
+                .then(offer => pc.setLocalDescription(offer))
+                .then(() => {
+                    // Przesłanie oferty do drugiego użytkownika
+                    socket.emit('offer', pc.localDescription);
+                })
+                .catch(error => console.error('Error creating offer:', error));
+        }
+    </script>
+</body>
+</html>
